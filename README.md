@@ -1,68 +1,128 @@
-# Polynomial Regression — ML Assignment 1
+# Polynomial regression - ML Assignment 1
 
-**Roll Number:** BT2024103  
-**Course:** Machine Learning
+Yashwanth Reddy Pidela, roll number BT2024103.
 
----
+This repository contains polynomial Ridge regression models for the two personalized datasets. Var1 has six inputs and permits total degrees up to 10. Var2 has three inputs and permits total degrees up to 20. Each problem has 1,000 labeled training rows and 1,000 test rows with hidden targets.
 
-## Overview
+## Method and results
 
-This repository contains the solution for ML Assignment 1, which involves building polynomial regression models to predict a continuous target variable `y` from two personalised datasets (`var1` and `var2`).
+For each problem, a shuffled split with seed 42 reserves 200 rows as a holdout and uses 800 rows for model selection. Five-fold cross-validation with seed 43 searches every allowed degree and 50 logarithmically spaced alpha values from 0.0001 to 10,000. Alpha is the Ridge penalty strength. Every fold fits polynomial expansion and scaling using only its 640 training rows, then scores its 160 validation rows.
 
-| Problem | Description | Features | Max Degree |
-|---|---|---|---|
-| `var1` | Power Plant Steam Turbine Optimization | 6 (`x1`–`x6`) | 10 |
-| `var2` | Subterranean Thermal Reservoir Mapping | 3 (`x1`, `x2`, `x3`) | 20 |
+The search chooses the degree and alpha together by the lowest mean validation MSE. MSE is the mean squared prediction error. R2 compares that error with the target's variation about its mean; larger values are better. R2 is recorded alongside MSE but does not decide the selected settings.
 
----
+The selected pair fits the 800 development rows and is assessed once on the 200 untouched holdout rows. The pair then fits all 1,000 labeled rows to generate the submission predictions. The holdout result belongs to the 800-row fit. The final training result belongs to the 1,000-row refit.
 
-## Approach
+| Dataset | Selected degree | Alpha | Selection CV MSE | Holdout MSE | Holdout R2 | Final train MSE | Final train R2 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Var1 | 5 | 24.42053095 | 0.528587 | 0.445705 | 0.962392 | 0.203276 | 0.979125 |
+| Var2 | 12 | 1.75751062 | 0.262967 | 0.254243 | 0.994152 | 0.160039 | 0.996019 |
 
-- **Polynomial feature expansion** using `sklearn.preprocessing.PolynomialFeatures`
-- **Ridge regression** with automatic regularization parameter selection via `RidgeCV`
-- **5-fold cross-validation** to select the optimal polynomial degree
-- **StandardScaler** applied inside the pipeline to prevent data leakage
+These are the lowest-CV-MSE settings among the evaluated configurations. The selection score can be optimistic because it guided the search. The holdout gives a separate assessment. Hidden test targets are unavailable, so no test MSE or test R2 is claimed.
 
-### Selected Degrees
+`PolynomialFeatures(include_bias=False)` creates the nonconstant terms, `StandardScaler` scales them, and `Ridge` fits their coefficients with a separate unpenalized intercept. For example, Var1 at degree 5 has 461 polynomial columns plus the intercept. The final model is a scikit-learn pipeline containing all three fitted steps.
 
-| Dataset | Best Degree | Ridge α | Train MSE | Train R² |
-|---|---|---|---|---|
-| `var1` | 5 | 24.4205 | 0.20328 | 0.97912 |
-| `var2` | 11 | 1.2068 | 0.16019 | 0.99602 |
+During selection, the script reuses one singular value decomposition per degree and fold to evaluate all 50 Ridge alphas. This computes the Ridge solutions while keeping all preprocessing inside the fold. It avoids repeating the same decomposition for each alpha. The selected settings and the extreme-degree calculations were checked against separate scikit-learn `Ridge(solver="svd")` pipeline fits.
 
----
+## Files
 
-## Repository Structure
-
-```
+```text
 .
-├── ml_assignment_solution.py   # Full training + CV + inference pipeline
-├── BT2024103_pred_var1.csv     # Predictions for var1 test set
-├── BT2024103_pred_var2.csv     # Predictions for var2 test set
-├── report_BT2024103.tex        # LaTeX source for the report
-├── figures/
-│   ├── var1_degree_vs_error.png
-│   ├── var1_residuals.png
-│   ├── var2_degree_vs_error.png
-│   └── var2_residuals.png
-└── README.md
+|-- ml_assignment_solution.py       Training, selection, figures, and inference
+|-- generate_report.py              Report source, reads saved results and figures
+|-- requirements.txt                Pinned Python dependencies
+|-- .gitignore                      Excludes input data and local environment files
+|-- README.md
+|-- CHANGES_AND_CHECKS.md            Summary of changes and executed checks
+|-- ML_Assignment_1_Report.pdf       Six-page report
+|-- BT2024103_pred_var1.csv          One y column, 1,000 rows
+|-- BT2024103_pred_var2.csv          One y column, 1,000 rows
+|-- figures/
+|   |-- var1_degree_vs_error.png
+|   |-- var1_residuals.png
+|   |-- var2_degree_vs_error.png
+|   `-- var2_residuals.png
+|-- models/
+|   |-- var1_model.joblib
+|   `-- var2_model.joblib
+`-- results/
+    |-- metrics.json                Settings, metrics, versions, and input hashes
+    |-- var1_cv_grid.csv             All 500 degree/alpha pairs
+    |-- var2_cv_grid.csv             All 1,000 degree/alpha pairs
+    |-- var1_degree_selection.csv    Best alpha at each of 10 degrees
+    `-- var2_degree_selection.csv    Best alpha at each of 20 degrees
 ```
 
----
+## Input data
 
-## How to Run
+Download the personalized BT2024103 data using the link in the assignment brief. Extract it and put the four CSV files together in a folder named `data`, or point `--data-dir` to the folder that already contains them. The program does not require any particular outer ZIP folder structure.
 
-1. Place the dataset files in a folder matching the expected path in the script, or update the `BASE` / `DATA` variables in `ml_assignment_solution.py`.
-2. Install dependencies:
-   ```bash
-   pip install numpy pandas matplotlib seaborn scikit-learn
-   ```
-3. Run the solution script:
-   ```bash
-   python ml_assignment_solution.py
-   ```
-   This will:
-   - Run 5-fold CV across all candidate degrees
-   - Train final Ridge models
-   - Save prediction CSVs (`BT2024103_pred_var1.csv`, `BT2024103_pred_var2.csv`)
-   - Save all figures to `figures/`
+```text
+data/
+|-- BT2024103_train_var1.csv   Columns x1,x2,x3,x4,x5,x6,y
+|-- BT2024103_test_var1.csv    Columns x1,x2,x3,x4,x5,x6
+|-- BT2024103_train_var2.csv   Columns x1,x2,x3,y
+`-- BT2024103_test_var2.csv    Columns x1,x2,x3
+```
+
+The input datasets are excluded from this repository. Their SHA-256 hashes are recorded in `results/metrics.json` so the exact inputs used for the provided results can be checked.
+
+## Run the full workflow
+
+The provided run used Python 3.12.14. Use Python 3.12 and install the pinned dependencies in a virtual environment. Run these commands from the repository folder:
+
+```bash
+python -m venv .venv
+```
+
+Activate it on Windows PowerShell:
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+Or activate it on macOS or Linux:
+
+```bash
+source .venv/bin/activate
+```
+
+Then install and run:
+
+```bash
+python -m pip install -r requirements.txt
+python ml_assignment_solution.py --data-dir data
+python generate_report.py
+```
+
+The training command searches all 1,500 degree/alpha pairs across the two problems, totaling 7,500 fold evaluations. It saves the predictions, models, four figures, and result files. The report command rebuilds the PDF from those saved files. The two commands must run in that order when regenerating everything.
+
+Output defaults to the script's own folder. To use a different output folder:
+
+```bash
+python ml_assignment_solution.py --data-dir "path/to/BT2024103" --output-dir run_outputs
+python generate_report.py --results-root run_outputs
+```
+
+The script uses two BLAS threads by default. `--threads` can change this limit. Numerical-library differences may cause small floating-point differences across machines.
+
+## Predict using the provided final models
+
+To regenerate the prediction files without repeating training:
+
+```bash
+python ml_assignment_solution.py --data-dir data --predict-only
+```
+
+This mode needs only the two test CSVs and the two saved models. It preserves the test rows' original order and writes one `y` column with no index. For models stored elsewhere, add `--output-dir` pointing to their parent folder.
+
+## Reading the saved results
+
+Each `*_cv_grid.csv` records the mean training MSE and R2, mean validation MSE and R2, and standard deviation of validation scores across the five folds. Each `*_degree_selection.csv` contains the row with the best alpha for that degree. Standard deviations use `ddof=0` and describe fold variability, not confidence intervals.
+
+The selection figures use a logarithmic MSE axis so the differences among higher degrees remain visible. The residual figures describe the final model's training errors. They are training diagnostics; the holdout metrics provide the independent performance assessment.
+
+The six-page report contains the method, every evaluated degree's best-alpha results, final settings, assessment metrics, figures, and reproduction instructions. Its numerical content is generated from `results/metrics.json` and the degree tables.
+
+## References
+
+The assignment brief specifies the input counts, degree limits, and submission format. The implementation uses the official scikit-learn APIs for [PolynomialFeatures](https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.PolynomialFeatures.html), [StandardScaler](https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.StandardScaler.html), [Ridge](https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.Ridge.html), and [KFold](https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.KFold.html).

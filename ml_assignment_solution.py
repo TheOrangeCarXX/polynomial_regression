@@ -1,294 +1,296 @@
-"""
-ML Assignment 1 - Polynomial Regression
-Student Roll Number: BT2024103
-Problem 1 (var1): Power Plant Steam Turbine Optimization (6 features, degree up to 10)
-Problem 2 (var2): Subterranean Thermal Reservoir Mapping (3 features, degree up to 20)
+"""Select polynomial Ridge models, assess a holdout, and predict both test sets.
+
+Run: python ml_assignment_solution.py --data-dir path/to/BT2024103
+The report source is generate_report.py. See README.md for the full workflow.
 """
 
+import argparse
+import hashlib
+import json
+import platform
+from pathlib import Path
+
+import joblib
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
-import seaborn as sns
-import warnings
-warnings.filterwarnings('ignore')
-
-from sklearn.preprocessing import PolynomialFeatures, StandardScaler
-from sklearn.linear_model import Ridge, RidgeCV, LinearRegression
-from sklearn.pipeline import Pipeline
-from sklearn.model_selection import cross_val_score, KFold
+import scipy
+import sklearn
+from scipy.linalg import svd
+from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_squared_error, r2_score
-import os
-
-# Paths
-BASE = r'c:\Users\yashw\Downloads\Academics\Sem 5\ML\Ass1'
-DATA = os.path.join(BASE, 'BT2024103', 'BT2024103')
-ROLL = 'BT2024103'
-
-train1 = pd.read_csv(os.path.join(DATA, f'{ROLL}_train_var1.csv'))
-test1  = pd.read_csv(os.path.join(DATA, f'{ROLL}_test_var1.csv'))
-train2 = pd.read_csv(os.path.join(DATA, f'{ROLL}_train_var2.csv'))
-test2  = pd.read_csv(os.path.join(DATA, f'{ROLL}_test_var2.csv'))
-
-print("Dataset shapes:")
-print(f"  Train var1: {train1.shape}, Test var1: {test1.shape}")
-print(f"  Train var2: {train2.shape}, Test var2: {test2.shape}")
+from sklearn.model_selection import KFold, train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import PolynomialFeatures, StandardScaler
+from threadpoolctl import threadpool_limits
 
 
-def find_best_degree(X_train, y_train, max_degree, alphas=None, cv=5, label=""):
-    if alphas is None:
-        alphas = [1e-4, 1e-3, 1e-2, 0.1, 1.0, 10.0, 100.0, 1000.0]
-
-    kf = KFold(n_splits=cv, shuffle=True, random_state=42)
-    results = []
-
-    for degree in range(1, max_degree + 1):
-        pipe = Pipeline([
-            ('poly', PolynomialFeatures(degree=degree, include_bias=True)),
-            ('scaler', StandardScaler()),
-            ('ridge', RidgeCV(alphas=alphas, cv=kf))
-        ])
-        scores = cross_val_score(pipe, X_train, y_train,
-                                 scoring='neg_mean_squared_error',
-                                 cv=kf, n_jobs=-1)
-        mean_mse  = -scores.mean()
-        std_mse   = scores.std()
-        r2_scores = cross_val_score(pipe, X_train, y_train,
-                                    scoring='r2', cv=kf, n_jobs=-1)
-        mean_r2 = r2_scores.mean()
-
-        n_features = PolynomialFeatures(degree=degree).fit(X_train).n_output_features_
-        results.append({
-            'degree': degree,
-            'cv_mse': mean_mse,
-            'cv_mse_std': std_mse,
-            'cv_r2': mean_r2,
-            'n_features': n_features
-        })
-        print(f"  [{label}] degree={degree:2d} | CV MSE={mean_mse:.6f} +/- {std_mse:.6f} "
-              f"| CV R2={mean_r2:.6f} | #features={n_features}")
-
-        if n_features > 50000:
-            print(f"  Stopping at degree {degree}: too many features ({n_features})")
-            break
-
-    df_res = pd.DataFrame(results)
-    best_row = df_res.loc[df_res['cv_mse'].idxmin()]
-    best_degree = int(best_row['degree'])
-    print(f"\n  >>> Best degree for {label}: {best_degree} "
-          f"(CV MSE={best_row['cv_mse']:.6f}, CV R2={best_row['cv_r2']:.6f})")
-    return best_degree, df_res
+ROLL = "BT2024103"
+PROBLEMS = {"var1": (6, 10), "var2": (3, 20)}
+ALPHAS = np.logspace(-4, 4, 50)
+SPLIT_SEED = 42
+CV_SEED = 43
+N_FOLDS = 5
+SCRIPT_DIR = Path(__file__).resolve().parent
 
 
-def train_final_model(X_train, y_train, degree, alphas=None, cv=5):
-    if alphas is None:
-        alphas = np.logspace(-4, 4, 50)
-    kf = KFold(n_splits=cv, shuffle=True, random_state=42)
-    pipe = Pipeline([
-        ('poly', PolynomialFeatures(degree=degree, include_bias=True)),
-        ('scaler', StandardScaler()),
-        ('ridge', RidgeCV(alphas=alphas, cv=kf))
+def load_csv(path, columns):
+    """Check the personalized file format before converting it to arrays."""
+    frame = pd.read_csv(path)
+    if list(frame.columns) != columns:
+        raise ValueError(f"{path.name}: expected columns {columns}, got {list(frame.columns)}")
+    if len(frame) != 1000:
+        raise ValueError(f"{path.name}: expected 1,000 rows, got {len(frame)}")
+    values = frame.to_numpy(dtype=float)
+    if not np.isfinite(values).all():
+        raise ValueError(f"{path.name}: missing or non-finite values")
+    return values
+
+
+def make_model(degree, alpha):
+    # Ridge fits the intercept separately, so the polynomial expansion omits 1.
+    return Pipeline([
+        ("poly", PolynomialFeatures(degree=degree, include_bias=False)),
+        ("scaler", StandardScaler()),
+        ("ridge", Ridge(alpha=alpha, fit_intercept=True, solver="svd")),
     ])
-    pipe.fit(X_train, y_train)
-    best_alpha = pipe.named_steps['ridge'].alpha_
-    print(f"  Final model alpha (Ridge): {best_alpha:.6f}")
-    return pipe, best_alpha
 
 
-# PROBLEM 1: VAR1
-print("\n" + "="*60)
-print("PROBLEM 1 - VAR1: Power Plant Steam Turbine Optimization")
-print("="*60)
+def ridge_path_predictions(X_fit, y_fit, X_valid, degree, alphas):
+    """Evaluate all alphas after fitting preprocessing on this fold's rows.
 
-feat_cols_1 = ['x1', 'x2', 'x3', 'x4', 'x5', 'x6']
-X_train1 = train1[feat_cols_1].values
-y_train1 = train1['y'].values
-X_test1  = test1[feat_cols_1].values
-
-print(f"\nSearching best degree (max=10) for var1...")
-best_deg1, df_deg1 = find_best_degree(X_train1, y_train1, max_degree=10, label="var1")
-
-print(f"\nTraining final model for var1 at degree {best_deg1}...")
-model1, alpha1 = train_final_model(X_train1, y_train1, best_deg1)
-
-y_pred_train1 = model1.predict(X_train1)
-train_mse1 = mean_squared_error(y_train1, y_pred_train1)
-train_r2_1 = r2_score(y_train1, y_pred_train1)
-print(f"  Train MSE={train_mse1:.6f}, Train R2={train_r2_1:.6f}")
-
-y_pred_test1 = model1.predict(X_test1)
-print(f"  Test predictions - min={y_pred_test1.min():.4f}, max={y_pred_test1.max():.4f}, "
-      f"mean={y_pred_test1.mean():.4f}")
-
-
-# PROBLEM 2: VAR2
-print("\n" + "="*60)
-print("PROBLEM 2 - VAR2: Subterranean Thermal Reservoir Mapping")
-print("="*60)
-
-feat_cols_2 = ['x1', 'x2', 'x3']
-X_train2 = train2[feat_cols_2].values
-y_train2 = train2['y'].values
-X_test2  = test2[feat_cols_2].values
-
-print(f"\nSearching best degree (max=20) for var2...")
-best_deg2, df_deg2 = find_best_degree(X_train2, y_train2, max_degree=20, label="var2")
-
-print(f"\nTraining final model for var2 at degree {best_deg2}...")
-model2, alpha2 = train_final_model(X_train2, y_train2, best_deg2)
-
-y_pred_train2 = model2.predict(X_train2)
-train_mse2 = mean_squared_error(y_train2, y_pred_train2)
-train_r2_2 = r2_score(y_train2, y_pred_train2)
-print(f"  Train MSE={train_mse2:.6f}, Train R2={train_r2_2:.6f}")
-
-y_pred_test2 = model2.predict(X_test2)
-print(f"  Test predictions - min={y_pred_test2.min():.4f}, max={y_pred_test2.max():.4f}, "
-      f"mean={y_pred_test2.mean():.4f}")
+    With centered Z = U diag(s) V.T, Ridge coefficients for each alpha are
+    V diag(s / (s**2 + alpha)) U.T y. Reusing one SVD evaluates the same
+    models as separate Ridge fits without repeating the decomposition.
+    Return one prediction column per alpha for each row in fit and valid.
+    """
+    poly = PolynomialFeatures(degree=degree, include_bias=False)
+    scaler = StandardScaler()
+    Z_fit = scaler.fit_transform(poly.fit_transform(X_fit))
+    Z_valid = scaler.transform(poly.transform(X_valid))
+    offset = Z_fit.mean(axis=0)
+    target_mean = y_fit.mean()
+    Z_fit -= offset
+    Z_valid -= offset
+    U, singular_values, Vt = svd(Z_fit, full_matrices=False, check_finite=True)
+    # Match sklearn's SVD solver threshold for zero singular values.
+    keep = singular_values > 1e-15
+    U, singular_values, Vt = U[:, keep], singular_values[keep], Vt[keep]
+    projected_y = U.T @ (y_fit - target_mean)
+    weights = projected_y[:, None] * singular_values[:, None] / (
+        singular_values[:, None] ** 2 + alphas[None, :]
+    )
+    fit_predictions = U @ (singular_values[:, None] * weights) + target_mean
+    valid_predictions = (Z_valid @ Vt.T) @ weights + target_mean
+    if not np.isfinite(fit_predictions).all() or not np.isfinite(valid_predictions).all():
+        raise ValueError(f"Non-finite predictions at degree {degree}")
+    return fit_predictions, valid_predictions, Z_fit.shape[1]
 
 
-# SAVE PREDICTION FILES
-pred1_path = os.path.join(BASE, f'{ROLL}_pred_var1.csv')
-pred2_path = os.path.join(BASE, f'{ROLL}_pred_var2.csv')
+def metrics_by_alpha(y, predictions):
+    errors = y[:, None] - predictions
+    squared_errors = np.sum(errors ** 2, axis=0)
+    total_variation = np.sum((y - y.mean()) ** 2)
+    if total_variation <= 0:
+        raise ValueError("R2 requires a target with nonzero variation in every fold")
+    return squared_errors / len(y), 1 - squared_errors / total_variation
 
-pd.DataFrame({'y': y_pred_test1}).to_csv(pred1_path, index=False)
-pd.DataFrame({'y': y_pred_test2}).to_csv(pred2_path, index=False)
-print(f"\nSaved: {pred1_path}")
-print(f"Saved: {pred2_path}")
+
+def select_model(X, y, max_degree):
+    """Joint degree/alpha search using the same five development folds."""
+    folds = list(KFold(N_FOLDS, shuffle=True, random_state=CV_SEED).split(X))
+    rows = []
+    for degree in range(1, max_degree + 1):
+        fit_mse, fit_r2, cv_mse, cv_r2 = [], [], [], []
+        for fit_index, valid_index in folds:
+            pred_fit, pred_valid, n_features = ridge_path_predictions(
+                X[fit_index], y[fit_index], X[valid_index], degree, ALPHAS
+            )
+            a, b = metrics_by_alpha(y[fit_index], pred_fit)
+            c, d = metrics_by_alpha(y[valid_index], pred_valid)
+            fit_mse.append(a)
+            fit_r2.append(b)
+            cv_mse.append(c)
+            cv_r2.append(d)
+        for index, alpha in enumerate(ALPHAS):
+            rows.append({
+                "degree": degree,
+                "alpha": float(alpha),
+                "n_polynomial_features": n_features,
+                "mean_train_mse": float(np.mean(fit_mse, axis=0)[index]),
+                "mean_train_r2": float(np.mean(fit_r2, axis=0)[index]),
+                "mean_cv_mse": float(np.mean(cv_mse, axis=0)[index]),
+                "std_cv_mse": float(np.std(cv_mse, axis=0, ddof=0)[index]),
+                "mean_cv_r2": float(np.mean(cv_r2, axis=0)[index]),
+                "std_cv_r2": float(np.std(cv_r2, axis=0, ddof=0)[index]),
+            })
+    results = pd.DataFrame(rows)
+    if not np.isfinite(results.to_numpy()).all():
+        raise ValueError("Model selection produced a non-finite score")
+    # Stable ordering resolves any exact ties by lower degree, then lower alpha.
+    ranked = results.sort_values(["mean_cv_mse", "degree", "alpha"], kind="stable")
+    selected = ranked.iloc[0]
+    per_degree = ranked.groupby("degree", sort=True).first().reset_index()
+    return results, per_degree, selected
 
 
-# PLOTS
-fig = plt.figure(figsize=(18, 14))
-fig.suptitle('ML Assignment 1 - Polynomial Regression Results (BT2024103)',
-             fontsize=16, fontweight='bold', y=0.98)
+def regression_metrics(y, prediction):
+    return {"mse": float(mean_squared_error(y, prediction)),
+            "r2": float(r2_score(y, prediction))}
 
-gs = gridspec.GridSpec(3, 3, figure=fig, hspace=0.45, wspace=0.35)
 
-# Row 0: Degree selection curves
-ax0 = fig.add_subplot(gs[0, 0])
-ax0.plot(df_deg1['degree'], df_deg1['cv_mse'], 'o-', color='steelblue', lw=2)
-ax0.fill_between(df_deg1['degree'],
-                 df_deg1['cv_mse'] - df_deg1['cv_mse_std'],
-                 df_deg1['cv_mse'] + df_deg1['cv_mse_std'],
-                 alpha=0.2, color='steelblue')
-ax0.axvline(best_deg1, color='red', ls='--', label=f'Best degree={best_deg1}')
-ax0.set_xlabel('Polynomial Degree')
-ax0.set_ylabel('CV MSE')
-ax0.set_title('Var1: Degree Selection (CV MSE)')
-ax0.legend(fontsize=9)
-ax0.grid(alpha=0.3)
+def save_predictions(prediction, output_path):
+    if prediction.shape != (1000,) or not np.isfinite(prediction).all():
+        raise ValueError("Submission predictions must contain 1,000 finite values")
+    pd.DataFrame({"y": prediction}).to_csv(output_path, index=False)
 
-ax1 = fig.add_subplot(gs[0, 1])
-ax1.plot(df_deg2['degree'], df_deg2['cv_mse'], 'o-', color='darkorange', lw=2)
-ax1.fill_between(df_deg2['degree'],
-                 df_deg2['cv_mse'] - df_deg2['cv_mse_std'],
-                 df_deg2['cv_mse'] + df_deg2['cv_mse_std'],
-                 alpha=0.2, color='darkorange')
-ax1.axvline(best_deg2, color='red', ls='--', label=f'Best degree={best_deg2}')
-ax1.set_xlabel('Polynomial Degree')
-ax1.set_ylabel('CV MSE')
-ax1.set_title('Var2: Degree Selection (CV MSE)')
-ax1.legend(fontsize=9)
-ax1.grid(alpha=0.3)
 
-ax2 = fig.add_subplot(gs[0, 2])
-ax2.plot(df_deg1['degree'], df_deg1['cv_r2'], 's--', color='steelblue', label='Var1', lw=2)
-ax2.plot(df_deg2['degree'], df_deg2['cv_r2'], 's--', color='darkorange', label='Var2', lw=2)
-ax2.axvline(best_deg1, color='steelblue', ls=':', alpha=0.7)
-ax2.axvline(best_deg2, color='darkorange', ls=':', alpha=0.7)
-ax2.set_xlabel('Polynomial Degree')
-ax2.set_ylabel('CV R2')
-ax2.set_title('R2 vs Degree (Both Problems)')
-ax2.legend(fontsize=9)
-ax2.grid(alpha=0.3)
+def save_figures(label, per_degree, selected, y, prediction, figures_dir):
+    plt.rcParams.update({"font.size": 11, "axes.spines.top": False,
+                         "axes.spines.right": False, "figure.dpi": 120})
+    degrees = per_degree["degree"].to_numpy()
+    means = per_degree["mean_cv_mse"].to_numpy()
+    deviations = per_degree["std_cv_mse"].to_numpy()
+    fig, ax = plt.subplots(figsize=(9.5, 4.2), layout="constrained")
+    ax.plot(degrees, means, "o-", color="#215b87", markersize=4,
+            label="Mean validation MSE at the best alpha for each degree")
+    ax.fill_between(degrees, np.maximum(means - deviations, 1e-12),
+                    means + deviations, color="#215b87", alpha=0.16,
+                    label="Plus/minus one fold standard deviation")
+    ax.scatter([selected["degree"]], [selected["mean_cv_mse"]], s=95,
+               facecolors="white", edgecolors="#b74032", linewidths=2, zorder=4,
+               label=f"Selected degree {int(selected['degree'])}")
+    ax.set(xlabel="Total polynomial degree", ylabel="Validation MSE, logarithmic scale",
+           title=f"{label.capitalize()}: five-fold selection on 800 development rows")
+    ax.set_yscale("log")
+    ax.set_xticks(degrees)
+    ax.grid(axis="y", which="both", alpha=0.2)
+    ax.legend(fontsize=8.5, loc="best")
+    fig.savefig(figures_dir / f"{label}_degree_vs_error.png", dpi=180)
+    plt.close(fig)
 
-# Row 1: Actual vs Predicted
-ax3 = fig.add_subplot(gs[1, 0])
-ax3.scatter(y_train1, y_pred_train1, alpha=0.4, s=10, color='steelblue')
-lims = [min(y_train1.min(), y_pred_train1.min()),
-        max(y_train1.max(), y_pred_train1.max())]
-ax3.plot(lims, lims, 'r--', lw=1.5)
-ax3.set_xlabel('Actual y')
-ax3.set_ylabel('Predicted y')
-ax3.set_title(f'Var1: Actual vs Predicted\nTrain MSE={train_mse1:.4f}, R2={train_r2_1:.4f}')
-ax3.grid(alpha=0.3)
+    residuals = y - prediction
+    fig, axes = plt.subplots(1, 2, figsize=(10.5, 3.7), layout="constrained")
+    axes[0].scatter(prediction, residuals, s=10, alpha=0.45, color="#215b87")
+    axes[0].axhline(0, color="#b74032", linewidth=1)
+    axes[0].set(xlabel="Fitted target", ylabel="Residual, actual minus fitted",
+                title="Residuals versus fitted values")
+    axes[1].hist(residuals, bins=35, color="#215b87", alpha=0.8,
+                 edgecolor="white", linewidth=0.5)
+    axes[1].axvline(0, color="#b74032", linewidth=1)
+    axes[1].set(xlabel="Residual, actual minus fitted", ylabel="Number of rows",
+                title="Residual distribution")
+    fig.suptitle(f"{label.capitalize()}: training diagnostics after fitting all 1,000 rows",
+                 fontsize=12)
+    fig.savefig(figures_dir / f"{label}_residuals.png", dpi=180)
+    plt.close(fig)
 
-ax4 = fig.add_subplot(gs[1, 1])
-ax4.scatter(y_train2, y_pred_train2, alpha=0.4, s=10, color='darkorange')
-lims2 = [min(y_train2.min(), y_pred_train2.min()),
-         max(y_train2.max(), y_pred_train2.max())]
-ax4.plot(lims2, lims2, 'r--', lw=1.5)
-ax4.set_xlabel('Actual y')
-ax4.set_ylabel('Predicted y')
-ax4.set_title(f'Var2: Actual vs Predicted\nTrain MSE={train_mse2:.4f}, R2={train_r2_2:.4f}')
-ax4.grid(alpha=0.3)
 
-ax5 = fig.add_subplot(gs[1, 2])
-ax5.bar(df_deg1['degree'], np.log10(df_deg1['n_features'] + 1),
-        color='steelblue', alpha=0.6, label='Var1')
-ax5.bar(df_deg2['degree'], np.log10(df_deg2['n_features'] + 1),
-        color='darkorange', alpha=0.6, label='Var2')
-ax5.set_xlabel('Polynomial Degree')
-ax5.set_ylabel('log10(# Features)')
-ax5.set_title('Feature Space Size vs Degree')
-ax5.legend(fontsize=9)
-ax5.grid(alpha=0.3)
+def run_training(data_dir, output_dir, threads):
+    results_dir = output_dir / "results"
+    figures_dir = output_dir / "figures"
+    models_dir = output_dir / "models"
+    for directory in (results_dir, figures_dir, models_dir):
+        directory.mkdir(parents=True, exist_ok=True)
+    summary = {
+        "roll_number": ROLL,
+        "protocol": {"development_rows": 800, "holdout_rows": 200,
+                     "folds": N_FOLDS, "split_seed": SPLIT_SEED, "cv_seed": CV_SEED,
+                     "selection_metric": "mean validation MSE",
+                     "alpha_grid": ALPHAS.tolist(), "threads": threads,
+                     "std_ddof": 0, "intercept": "separate, unpenalized",
+                     "holdout_used_for_selection": False},
+        "versions": {"python": platform.python_version(), "numpy": np.__version__,
+                     "pandas": pd.__version__, "scipy": scipy.__version__,
+                     "scikit-learn": sklearn.__version__,
+                     "matplotlib": matplotlib.__version__, "joblib": joblib.__version__},
+        "datasets": {},
+    }
+    for label, (n_inputs, max_degree) in PROBLEMS.items():
+        feature_names = [f"x{i}" for i in range(1, n_inputs + 1)]
+        train_path = data_dir / f"{ROLL}_train_{label}.csv"
+        test_path = data_dir / f"{ROLL}_test_{label}.csv"
+        train = load_csv(train_path, feature_names + ["y"])
+        X, y = train[:, :-1], train[:, -1]
+        X_test = load_csv(test_path, feature_names)
+        development, holdout = train_test_split(
+            np.arange(len(y)), test_size=0.2, random_state=SPLIT_SEED
+        )
+        print(f"{label}: searching degrees 1-{max_degree}, 50 alphas, five folds...", flush=True)
+        all_results, per_degree, selected = select_model(
+            X[development], y[development], max_degree
+        )
+        degree, alpha = int(selected["degree"]), float(selected["alpha"])
+        development_model = make_model(degree, alpha).fit(X[development], y[development])
+        development_metrics = regression_metrics(y[development], development_model.predict(X[development]))
+        holdout_metrics = regression_metrics(y[holdout], development_model.predict(X[holdout]))
+        # The holdout score is recorded once. It does not change degree or alpha.
+        final_model = make_model(degree, alpha).fit(X, y)
+        train_prediction = final_model.predict(X)
+        test_prediction = final_model.predict(X_test)
+        final_metrics = regression_metrics(y, train_prediction)
+        all_results.to_csv(results_dir / f"{label}_cv_grid.csv", index=False)
+        per_degree.to_csv(results_dir / f"{label}_degree_selection.csv", index=False)
+        save_predictions(test_prediction, output_dir / f"{ROLL}_pred_{label}.csv")
+        joblib.dump({"model": final_model, "feature_names": feature_names,
+                     "roll_number": ROLL, "dataset": label},
+                    models_dir / f"{label}_model.joblib", compress=3)
+        save_figures(label, per_degree, selected, y, train_prediction, figures_dir)
+        summary["datasets"][label] = {
+            "input_features": feature_names, "max_degree": max_degree,
+            "train_rows": len(y), "test_rows": len(X_test),
+            "selected_degree": degree, "selected_alpha": alpha,
+            "n_polynomial_features": int(selected["n_polynomial_features"]),
+            "selection_cv": {"mse": float(selected["mean_cv_mse"]),
+                             "mse_std": float(selected["std_cv_mse"]),
+                             "r2": float(selected["mean_cv_r2"])},
+            "development_train": development_metrics, "holdout": holdout_metrics,
+            "final_train": final_metrics,
+            "input_sha256": {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                             for p in (train_path, test_path)},
+        }
+        print(f"{label}: degree={degree}, alpha={alpha:.8g}, "
+              f"CV MSE={selected['mean_cv_mse']:.6f}, "
+              f"holdout MSE={holdout_metrics['mse']:.6f}", flush=True)
+    (results_dir / "metrics.json").write_text(
+        json.dumps(summary, indent=2, allow_nan=False) + "\n", encoding="utf-8"
+    )
+    print(f"Saved predictions, models, figures, and results to {output_dir}", flush=True)
 
-# Row 2: Residuals
-residuals1 = y_train1 - y_pred_train1
-residuals2 = y_train2 - y_pred_train2
 
-ax6 = fig.add_subplot(gs[2, 0])
-ax6.scatter(y_pred_train1, residuals1, alpha=0.4, s=10, color='steelblue')
-ax6.axhline(0, color='red', ls='--', lw=1.5)
-ax6.set_xlabel('Predicted y')
-ax6.set_ylabel('Residual')
-ax6.set_title('Var1: Residuals vs Predicted')
-ax6.grid(alpha=0.3)
+def run_prediction(data_dir, output_dir):
+    for label in PROBLEMS:
+        saved = joblib.load(output_dir / "models" / f"{label}_model.joblib")
+        X_test = load_csv(data_dir / f"{ROLL}_test_{label}.csv", saved["feature_names"])
+        save_predictions(saved["model"].predict(X_test),
+                         output_dir / f"{ROLL}_pred_{label}.csv")
+    print(f"Saved both prediction CSVs to {output_dir}", flush=True)
 
-ax7 = fig.add_subplot(gs[2, 1])
-ax7.scatter(y_pred_train2, residuals2, alpha=0.4, s=10, color='darkorange')
-ax7.axhline(0, color='red', ls='--', lw=1.5)
-ax7.set_xlabel('Predicted y')
-ax7.set_ylabel('Residual')
-ax7.set_title('Var2: Residuals vs Predicted')
-ax7.grid(alpha=0.3)
 
-ax8 = fig.add_subplot(gs[2, 2])
-ax8.hist(residuals1, bins=40, color='steelblue', alpha=0.5, label='Var1', density=True)
-ax8.hist(residuals2, bins=40, color='darkorange', alpha=0.5, label='Var2', density=True)
-ax8.axvline(0, color='black', lw=1.5, ls='--')
-ax8.set_xlabel('Residual')
-ax8.set_ylabel('Density')
-ax8.set_title('Residual Distributions')
-ax8.legend(fontsize=9)
-ax8.grid(alpha=0.3)
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--data-dir", type=Path, default=SCRIPT_DIR / "data",
+                        help="Folder containing the four BT2024103 input CSVs")
+    parser.add_argument("--output-dir", type=Path, default=SCRIPT_DIR,
+                        help="Folder for predictions, models, figures, and results")
+    parser.add_argument("--predict-only", action="store_true",
+                        help="Use saved final models without repeating training")
+    parser.add_argument("--threads", type=int, default=2,
+                        help="BLAS threads, default 2 to limit CPU and memory use")
+    args = parser.parse_args()
+    if args.threads < 1:
+        parser.error("--threads must be positive")
+    data_dir, output_dir = args.data_dir.resolve(), args.output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with threadpool_limits(limits=args.threads):
+        if args.predict_only:
+            run_prediction(data_dir, output_dir)
+        else:
+            run_training(data_dir, output_dir, args.threads)
 
-plot_path = os.path.join(BASE, 'ml_assignment_plots.png')
-fig.savefig(plot_path, dpi=150, bbox_inches='tight')
-print(f"Saved plot: {plot_path}")
-plt.close()
 
-# SUMMARY
-print("\n" + "="*60)
-print("FINAL SUMMARY")
-print("="*60)
-print(f"\nVar1 (Steam Turbine Optimization):")
-print(f"  Best Polynomial Degree : {best_deg1}")
-print(f"  Ridge Alpha            : {alpha1:.6f}")
-print(f"  Train MSE              : {train_mse1:.6f}")
-print(f"  Train R2               : {train_r2_1:.6f}")
-n_feat1 = PolynomialFeatures(degree=best_deg1).fit(X_train1).n_output_features_
-print(f"  # Polynomial Features  : {n_feat1}")
-
-print(f"\nVar2 (Thermal Reservoir Mapping):")
-print(f"  Best Polynomial Degree : {best_deg2}")
-print(f"  Ridge Alpha            : {alpha2:.6f}")
-print(f"  Train MSE              : {train_mse2:.6f}")
-print(f"  Train R2               : {train_r2_2:.6f}")
-n_feat2 = PolynomialFeatures(degree=best_deg2).fit(X_train2).n_output_features_
-print(f"  # Polynomial Features  : {n_feat2}")
-
-print("\nDone! All files saved.")
+if __name__ == "__main__":
+    main()
