@@ -31,7 +31,6 @@ During selection, the script reuses one singular value decomposition per degree 
 |-- requirements.txt                Pinned Python dependencies
 |-- .gitignore                      Excludes input data and local environment files
 |-- README.md
-|-- CHANGES_AND_CHECKS.md           Summary of changes and executed checks
 |-- ML_Assignment_1_Report.pdf      Six-page report
 |-- BT2024103_pred_var1.csv         One y column, 1,000 rows
 |-- BT2024103_pred_var2.csv         One y column, 1,000 rows
