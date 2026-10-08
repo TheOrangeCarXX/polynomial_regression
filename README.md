@@ -1,7 +1,7 @@
 # Polynomial Regression — ML Assignment 1
 
 **Roll Number:** BT2024103  
-**Course:** Machine Learning (Sem 5)
+**Course:** Machine Learning
 
 ---
 
