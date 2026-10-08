@@ -28,28 +28,18 @@ During selection, the script reuses one singular value decomposition per degree 
 ```text
 .
 |-- ml_assignment_solution.py       Training, selection, figures, and inference
-|-- generate_report.py              Report source, reads saved results and figures
 |-- requirements.txt                Pinned Python dependencies
 |-- .gitignore                      Excludes input data and local environment files
 |-- README.md
-|-- CHANGES_AND_CHECKS.md            Summary of changes and executed checks
-|-- ML_Assignment_1_Report.pdf       Six-page report
-|-- BT2024103_pred_var1.csv          One y column, 1,000 rows
-|-- BT2024103_pred_var2.csv          One y column, 1,000 rows
-|-- figures/
-|   |-- var1_degree_vs_error.png
-|   |-- var1_residuals.png
-|   |-- var2_degree_vs_error.png
-|   `-- var2_residuals.png
-|-- models/
-|   |-- var1_model.joblib
-|   `-- var2_model.joblib
-`-- results/
-    |-- metrics.json                Settings, metrics, versions, and input hashes
-    |-- var1_cv_grid.csv             All 500 degree/alpha pairs
-    |-- var2_cv_grid.csv             All 1,000 degree/alpha pairs
-    |-- var1_degree_selection.csv    Best alpha at each of 10 degrees
-    `-- var2_degree_selection.csv    Best alpha at each of 20 degrees
+|-- CHANGES_AND_CHECKS.md           Summary of changes and executed checks
+|-- ML_Assignment_1_Report.pdf      Six-page report
+|-- BT2024103_pred_var1.csv         One y column, 1,000 rows
+|-- BT2024103_pred_var2.csv         One y column, 1,000 rows
+`-- figures/
+    |-- var1_degree_vs_error.png
+    |-- var1_residuals.png
+    |-- var2_degree_vs_error.png
+    `-- var2_residuals.png
 ```
 
 ## Input data
@@ -64,7 +54,7 @@ data/
 `-- BT2024103_test_var2.csv    Columns x1,x2,x3
 ```
 
-The input datasets are excluded from this repository. Their SHA-256 hashes are recorded in `results/metrics.json` so the exact inputs used for the provided results can be checked.
+The input datasets are excluded from this repository.
 
 ## Run the full workflow
 
@@ -91,37 +81,19 @@ Then install and run:
 ```bash
 python -m pip install -r requirements.txt
 python ml_assignment_solution.py --data-dir data
-python generate_report.py
 ```
 
-The training command searches all 1,500 degree/alpha pairs across the two problems, totaling 7,500 fold evaluations. It saves the predictions, models, four figures, and result files. The report command rebuilds the PDF from those saved files. The two commands must run in that order when regenerating everything.
+The training command searches all 1,500 degree/alpha pairs across the two problems, totaling 7,500 fold evaluations. It saves the predictions and four figures.
 
-Output defaults to the script's own folder. To use a different output folder:
+To use a different output folder:
 
 ```bash
 python ml_assignment_solution.py --data-dir "path/to/BT2024103" --output-dir run_outputs
-python generate_report.py --results-root run_outputs
 ```
 
 The script uses two BLAS threads by default. `--threads` can change this limit. Numerical-library differences may cause small floating-point differences across machines.
 
-## Predict using the provided final models
-
-To regenerate the prediction files without repeating training:
-
-```bash
-python ml_assignment_solution.py --data-dir data --predict-only
-```
-
-This mode needs only the two test CSVs and the two saved models. It preserves the test rows' original order and writes one `y` column with no index. For models stored elsewhere, add `--output-dir` pointing to their parent folder.
-
-## Reading the saved results
-
-Each `*_cv_grid.csv` records the mean training MSE and R2, mean validation MSE and R2, and standard deviation of validation scores across the five folds. Each `*_degree_selection.csv` contains the row with the best alpha for that degree. Standard deviations use `ddof=0` and describe fold variability, not confidence intervals.
-
 The selection figures use a logarithmic MSE axis so the differences among higher degrees remain visible. The residual figures describe the final model's training errors. They are training diagnostics; the holdout metrics provide the independent performance assessment.
-
-The six-page report contains the method, every evaluated degree's best-alpha results, final settings, assessment metrics, figures, and reproduction instructions. Its numerical content is generated from `results/metrics.json` and the degree tables.
 
 ## References
 
